@@ -1,30 +1,27 @@
-// routes/orders.js
-import express from "express";
-import { authMiddleware } from "../middleware/auth.js";
-import prisma from "../prismaClient.js"; // make sure you import your Prisma client
+import { NextResponse } from 'next/server';
+import { authMiddleware } from '../middleware/auth.js';
+import prisma from '../prismaClient.js';
 
-const router = express.Router();
-
-// POST /orders
-router.post('/', authMiddleware, async (req, res) => {
+async function createOrderHandler(req) {
   try {
+    const body = await req.json();
     const userId = req.user.id;
-    const { items, subtotal, service_fee, total_amount, payment_method } = req.body;
+    const { items, subtotal, service_fee, total_amount, payment_method } = body;
 
     if (!items || items.length === 0) {
-      return res.status(400).json({ error: 'No items in the order.' });
+      return NextResponse.json({ error: 'No items in the order.' }, { status: 400 });
     }
 
     // Fetch user wallet
     const user = await prisma.user.findUnique({ where: { id: userId } });
 
     if (!user) {
-      return res.status(404).json({ error: 'User not found.' });
+      return NextResponse.json({ error: 'User not found.' }, { status: 404 });
     }
 
     if (payment_method === 'wallet') {
       if (user.wallet_balance < total_amount) {
-        return res.status(400).json({ error: 'Insufficient wallet balance.' });
+        return NextResponse.json({ error: 'Insufficient wallet balance.' }, { status: 400 });
       }
 
       // Deduct wallet balance
@@ -34,31 +31,33 @@ router.post('/', authMiddleware, async (req, res) => {
       });
     }
 
-    // Create order with order items
+    // Create order with order items in a transaction
     const order = await prisma.order.create({
       data: {
-        user_id: userId,
+        userId: userId, // Prisma schema usually uses camelCase for relation fields
         subtotal,
         service_fee,
         total_amount,
         payment_method,
         status: 'Pending',
         items: {
-          create: items.map(item => ({
-            medicine_id: item.medicine_id, // ✅ must match table column
+          create: items.map((item) => ({
+            medicineId: item.medicine_id, // Prisma schema usually uses camelCase
             quantity: item.quantity,
             price: item.price,
           })),
         },
       },
-      include: { items: true },
+      include: {
+        items: true,
+      },
     });
 
-    res.status(201).json(order);
+    return NextResponse.json(order, { status: 201 });
   } catch (err) {
     console.error('Order creation failed:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
-});
+}
 
-export default router;
+export const POST = authMiddleware(createOrderHandler);
