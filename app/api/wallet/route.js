@@ -1,32 +1,50 @@
-// routes/wallet.js
-import express from "express";
-import { authMiddleware } from "../middleware/auth.js";
-import User from "../models/User.js";
+import { NextResponse } from 'next/server';
+import { authMiddleware } from '~/app/api/middleware/auth.js';
+import prisma from '../prismaClient.js';
 
-const router = express.Router();
-
-router.post("/deduct", authMiddleware, async (req, res) => {
+async function deductFromWalletHandler(req) {
   try {
-    const user = req.user;
-    const { amount } = req.body;
+    const body = await req.json();
+    const { amount } = body;
+    const userId = req.user.id;
 
     if (!amount || amount <= 0)
-      return res.status(400).json({ error: "Invalid amount." });
+      return NextResponse.json({ error: 'Invalid amount.' }, { status: 400 });
 
-    if (user.wallet_balance < amount)
-      return res.status(400).json({ error: "Insufficient wallet balance." });
+    // Use a transaction to ensure data integrity
+    const result = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+      });
 
-    user.wallet_balance -= amount;
-    await user.save();
+      if (!user) {
+        throw new Error('User not found.');
+      }
 
-    res.json({
-      message: "Wallet updated successfully.",
-      wallet_balance: user.wallet_balance,
+      if (user.wallet_balance < amount) {
+        throw new Error('Insufficient wallet balance.');
+      }
+
+      const updatedUser = await tx.user.update({
+        where: { id: userId },
+        data: { wallet_balance: { decrement: amount } },
+      });
+
+      return updatedUser;
     });
-  } catch (err) {
-    console.error("Wallet deduct error:", err);
-    res.status(500).json({ error: "Failed to deduct wallet." });
-  }
-});
 
-export default router;
+    return NextResponse.json({ message: 'Wallet updated successfully.', wallet_balance: result.wallet_balance });
+  } catch (err) {
+    console.error('Wallet deduct error:', err.message);
+    // Check for specific error messages to return appropriate status codes
+    if (err.message === 'Insufficient wallet balance.') {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    if (err.message === 'User not found.') {
+      return NextResponse.json({ error: err.message }, { status: 404 });
+    }
+    return NextResponse.json({ error: 'Failed to deduct from wallet.' }, { status: 500 });
+  }
+}
+
+export const POST = authMiddleware(deductFromWalletHandler);

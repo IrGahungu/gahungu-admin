@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware } from '~/app/api/middleware/auth.js';
 import prisma from '../prismaClient.js';
 
 async function createOrderHandler(req) {
