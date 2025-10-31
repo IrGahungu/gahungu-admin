@@ -1,46 +1,39 @@
 // app/api/admin/orders/[id]/route.ts
-import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { NextRequest, NextResponse } from "next/server";
+import prisma from "../../../prismaClient.js";
+import { authMiddleware } from "../../../middleware/auth.js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+interface AuthenticatedNextRequest extends NextRequest {
+  user: { id: number; email: string; role: string }; // This will be added by authMiddleware
+}
 
 // -------------------------
 // GET single order by ID
 // -------------------------
-export async function GET(
-  req: Request,
-  { params }: { params: { id: string } }
-) {
+async function getOrderHandler(req: AuthenticatedNextRequest, { params }: { params: { id: string } }) {
   const { id } = params;
 
   try {
-    const { data: order, error } = await supabase
-      .from("orders")
-      .select(`
-        id,
-        total_amount,
-        status,
-        created_at,
-        users(fullname),
-        order_items(
-          id,
-          quantity,
-          price,
-          medicines(name)
-        )
-      `)
-      .eq("id", id)
-      .maybeSingle(); // ← safer than single()
-
-    if (error) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: 500 }
-      );
+    // Ensure the user is an admin (req.user is added by authMiddleware, but TypeScript doesn't know it here)
+    if (req.user.role !== "admin") {
+      return NextResponse.json({ error: "Access denied. Admins only." }, { status: 403 });
     }
+
+    const order = await prisma.orders.findUnique({
+      where: { id: parseInt(id, 10) },
+      include: {
+        users: {
+          select: { fullname: true },
+        },
+        order_items: {
+          include: {
+            medicines: {
+              select: { name: true },
+            },
+          },
+        },
+      },
+    });
 
     if (!order) {
       return NextResponse.json(
@@ -51,16 +44,16 @@ export async function GET(
 
     // Format data for frontend
     const formatted = {
-      id: order.id,
-      user_fullname: (order.users as unknown as { fullname: string } | null)?.fullname ?? "Unknown",
+      id: order.id.toString(),
+      user_fullname: order.users?.fullname ?? "Unknown",
       total_amount: order.total_amount,
       status: order.status,
       created_at: order.created_at,
-      items: order.order_items?.map((item: any) => ({
+      items: order.order_items.map((item: any) => ({
         id: item.id,
-        medicine_name: item.medicines?.name ?? "Unknown",
+        medicine_name: item.medicines?.name ?? "Unknown Medicine",
         quantity: item.quantity,
-        price: item.price,
+        price: item.price.toString(),
       })) ?? [],
     };
 
@@ -74,33 +67,32 @@ export async function GET(
   }
 }
 
-// -------------------------
+// ------------------------- 
 // PUT update order status
 // -------------------------
-export async function PUT(
-  req: Request,
-  { params }: { params: { id: string } }
-) {
-  const { id } = params;
-  const body = await req.json();
-  const { status } = body;
-
-  if (!["Pending", "Packed", "Delivered", "Cancelled"].includes(status)) {
-    return NextResponse.json(
-      { error: "Invalid status value" },
-      { status: 400 }
-    );
-  }
+async function updateOrderHandler(req: AuthenticatedNextRequest, { params }: { params: { id: string } }) {
+  const { id } = params; 
 
   try {
-    const { error } = await supabase
-      .from("orders")
-      .update({ status })
-      .eq("id", id);
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    // Ensure the user is an admin
+    if (req.user.role !== "admin") {
+      return NextResponse.json({ error: "Access denied. Admins only." }, { status: 403 });
     }
+
+    const body = await req.json();
+    const { status } = body;
+
+    if (!status || !["Pending", "Packed", "Delivered", "Cancelled"].includes(status)) {
+      return NextResponse.json(
+        { error: "Invalid or missing status value" },
+        { status: 400 }
+      );
+    }
+
+    await prisma.orders.update({
+      where: { id: parseInt(id, 10) },
+      data: { status },
+    });
 
     return NextResponse.json({ message: "Order status updated" });
   } catch (err) {
@@ -111,3 +103,8 @@ export async function PUT(
     );
   }
 }
+
+export const GET = authMiddleware(getOrderHandler);
+export const PUT = authMiddleware(updateOrderHandler);
+
+export const runtime = 'nodejs'; // Force Node.js runtime for JWT compatibility
