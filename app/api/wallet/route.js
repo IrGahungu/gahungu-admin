@@ -48,3 +48,5 @@ async function deductFromWalletHandler(req) {
 }
 
 export const POST = authMiddleware(deductFromWalletHandler);
+
+export const runtime = 'nodejs'; // Force Node.js runtime for JWT compatibility

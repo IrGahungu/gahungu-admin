@@ -61,3 +61,5 @@ async function createOrderHandler(req) {
 }
 
 export const POST = authMiddleware(createOrderHandler);
+
+export const runtime = 'nodejs'; // Force Node.js runtime for JWT compatibility
